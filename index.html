@@ -46,6 +46,9 @@
             const [selectedLocation, setSelectedLocation] = useState(null);
             const [inventory, setInventory] = useState([]);
             const [isLoading, setIsLoading] = useState(true);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [searchResults, setSearchResults] = useState(null);
+            const [highlightedLocation, setHighlightedLocation] = useState(null);
 
             const handleFileSelect = (event) => {
                 const file = event.target.files[0];
@@ -118,13 +121,14 @@
                 const parts = ubicacionStr.split(/\s*-\s*/);
                 
                 parts.forEach(part => {
-                    const cleaned = part.trim().toLowerCase();
-                    const match = cleaned.match(/([a-z])(\d+)([abc]+)?/);
+                    const cleaned = part.trim();
+                    // Mantener mayúsculas y minúsculas
+                    const match = cleaned.match(/([a-zA-Z])(\d+)([abcABC]+)?/);
                     
                     if (match) {
-                        const rack = match[1];
+                        const rack = match[1]; // Mantener mayúscula/minúscula original
                         const level = parseInt(match[2]);
-                        const subPositions = match[3] ? match[3].split('') : [];
+                        const subPositions = match[3] ? match[3].toLowerCase().split('') : [];
                         
                         if (subPositions.length === 0) {
                             locations.push({ rack, level, subPosition: 'a' });
@@ -145,7 +149,7 @@
                 return inventory.filter(item => {
                     const locations = parseLocations(item.ubicacion);
                     return locations.some(loc => 
-                        loc.rack.toLowerCase() === rackName.toLowerCase() &&
+                        loc.rack === rackName && // Comparación exacta respetando mayúsculas
                         loc.level === level &&
                         loc.subPosition === subPosition
                     );
@@ -157,7 +161,8 @@
                 return items.reduce((sum, item) => sum + item.stock, 0);
             };
 
-            const getStockColor = (stock) => {
+            const getStockColor = (stock, isHighlighted) => {
+                if (isHighlighted) return '#217fbd';
                 if (stock === 0) return '#f5f5f5';
                 if (stock < 50) return '#fff9c4';
                 if (stock < 500) return '#ffeb3b';
@@ -168,6 +173,64 @@
             const handleLocationClick = (rackName, level, subPosition) => {
                 const items = getItemsForLocation(rackName, level, subPosition);
                 setSelectedLocation({ rack: rackName, level, subPosition, items });
+                setSearchResults(null);
+                setSearchTerm('');
+                setHighlightedLocation(null);
+            };
+
+            const handleSearch = () => {
+                if (!searchTerm.trim()) return;
+                
+                const results = inventory.filter(item => 
+                    item.codigo.toLowerCase().includes(searchTerm.toLowerCase())
+                );
+                
+                if (results.length > 0) {
+                    // Obtener todas las ubicaciones únicas
+                    const allLocations = [];
+                    results.forEach(item => {
+                        const locs = parseLocations(item.ubicacion);
+                        locs.forEach(loc => {
+                            allLocations.push({
+                                ...loc,
+                                item: item
+                            });
+                        });
+                    });
+                    
+                    setSearchResults({ items: results, locations: allLocations });
+                    setSelectedLocation(null);
+                } else {
+                    alert('No se encontraron productos con ese código');
+                }
+            };
+
+            const goToLocation = (location) => {
+                // Determinar en qué capa está el rack
+                let targetLayer = 1;
+                const rackUpper = location.rack.toUpperCase();
+                if (['B', 'D', 'G'].includes(rackUpper)) targetLayer = 2;
+                if (['E', 'H'].includes(rackUpper)) targetLayer = 3;
+                // Para minúsculas
+                if (['d'].includes(location.rack)) targetLayer = 2;
+                if (['e'].includes(location.rack)) targetLayer = 3;
+                
+                setCurrentLayer(targetLayer);
+                setHighlightedLocation({ 
+                    rack: location.rack, 
+                    level: location.level, 
+                    subPosition: location.subPosition 
+                });
+                
+                // Mostrar los items de esa ubicación
+                const items = getItemsForLocation(location.rack, location.level, location.subPosition);
+                setSelectedLocation({ 
+                    rack: location.rack, 
+                    level: location.level, 
+                    subPosition: location.subPosition, 
+                    items 
+                });
+                setSearchResults(null);
             };
 
             const currentConfig = layerConfigs[currentLayer];
@@ -215,9 +278,30 @@
 
             return (
                 <div className="w-full h-screen bg-gray-50 flex flex-col">
-                    <div className="bg-blue-600 text-white p-4 shadow-lg">
-                        <h1 className="text-2xl font-bold">Plano de Depósito - EBM Papst</h1>
-                        <p className="text-sm mt-1">{inventory.length} productos cargados | Seleccioná una capa y ubicación</p>
+                    <div className="bg-white p-4 shadow-lg flex items-center justify-between border-b">
+                        <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcREVqEmgrYQWkkTsWgTFvCb2e3hSX_NKEp7YZc6LUn_avNqHnkvsMW_g5FONQDYLzP-YA&usqp=CAU" alt="ebm papst" style={{ height: '40px' }} />
+                        
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="text"
+                                placeholder="Buscar por código..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                                className="px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                                style={{ width: '300px' }}
+                            />
+                            <button
+                                onClick={handleSearch}
+                                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
+                            >
+                                Buscar
+                            </button>
+                        </div>
+                        
+                        <div className="text-sm text-gray-600">
+                            {inventory.length} productos cargados
+                        </div>
                     </div>
 
                     <div className="flex-1 flex overflow-hidden">
@@ -314,6 +398,10 @@
                                                             {['a', 'b', 'c'].map((subPos, subIdx) => {
                                                                 const items = getItemsForLocation(rack.name, level, subPos);
                                                                 const totalStock = getTotalStockInLocation(rack.name, level, subPos);
+                                                                const isHighlighted = highlightedLocation && 
+                                                                    highlightedLocation.rack === rack.name && 
+                                                                    highlightedLocation.level === level && 
+                                                                    highlightedLocation.subPosition === subPos;
                                                                 
                                                                 return (
                                                                     <g key={subPos}>
@@ -334,9 +422,10 @@
                                                                             y={rack.y + i * levelHeight}
                                                                             width={subWidth}
                                                                             height={levelHeight}
-                                                                            fill={getStockColor(totalStock)}
-                                                                            fillOpacity="0.8"
-                                                                            stroke="none"
+                                                                            fill={getStockColor(totalStock, isHighlighted)}
+                                                                            fillOpacity={isHighlighted ? "1" : "0.8"}
+                                                                            stroke={isHighlighted ? "#217fbd" : "none"}
+                                                                            strokeWidth={isHighlighted ? "3" : "0"}
                                                                             style={{ cursor: 'pointer' }}
                                                                             onClick={() => handleLocationClick(rack.name, level, subPos)}
                                                                         />
@@ -346,7 +435,7 @@
                                                                                 x={rack.x + subIdx * subWidth + subWidth / 2}
                                                                                 y={rack.y + i * levelHeight + levelHeight / 2 + 4}
                                                                                 textAnchor="middle"
-                                                                                style={{ fontSize: '11px', fontWeight: 'bold', fill: '#b91c1c', pointerEvents: 'none' }}
+                                                                                style={{ fontSize: '11px', fontWeight: 'bold', fill: isHighlighted ? '#ffffff' : '#b91c1c', pointerEvents: 'none' }}
                                                                             >
                                                                                 {items.length}
                                                                             </text>
@@ -395,11 +484,47 @@
                             <div className="p-4 border-b bg-gray-50">
                                 <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                                     <Package size={20} />
-                                    Detalles de Ubicación
+                                    {searchResults ? 'Resultados de Búsqueda' : 'Detalles de Ubicación'}
                                 </h2>
                             </div>
 
-                            {selectedLocation ? (
+                            {searchResults ? (
+                                <div className="p-4">
+                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                                        <div className="text-sm text-gray-600">Producto encontrado:</div>
+                                        <div className="text-lg font-bold text-blue-600">
+                                            {searchResults.items[0].codigo}
+                                        </div>
+                                        <div className="text-sm text-gray-700 mt-1">
+                                            {searchResults.items[0].descripcion}
+                                        </div>
+                                        <div className="text-xs text-gray-500 mt-1">
+                                            Stock total: {searchResults.items[0].stock.toLocaleString()}
+                                        </div>
+                                    </div>
+
+                                    <div className="text-sm font-semibold text-gray-700 mb-2">
+                                        Ubicaciones ({searchResults.locations.length}):
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        {searchResults.locations.map((loc, idx) => (
+                                            <button
+                                                key={idx}
+                                                onClick={() => goToLocation(loc)}
+                                                className="w-full text-left border rounded-lg p-3 hover:bg-blue-50 hover:border-blue-400 transition-colors"
+                                            >
+                                                <div className="font-bold text-blue-600 text-lg">
+                                                    {loc.rack.toUpperCase()}{loc.level}{loc.subPosition.toUpperCase()}
+                                                </div>
+                                                <div className="text-xs text-gray-500 mt-1">
+                                                    Click para ir a esta ubicación
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : selectedLocation ? (
                                 <div className="p-4">
                                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
                                         <div className="text-sm text-gray-600">Ubicación seleccionada:</div>
